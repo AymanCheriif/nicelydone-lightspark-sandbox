@@ -1,7 +1,7 @@
 {
   "name": "nicelydone-lightspark-sandbox",
   "version": "1.0.0",
-  "description": "Lightspark REGTEST sandbox: create/pay Lightning invoices in test mode and receive signed webhooks.",
+  "description": "Lightspark Grid sandbox: fund accounts, create/execute quotes, and receive signature-verified webhooks.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -12,14 +12,14 @@
   },
   "keywords": [
     "lightspark",
-    "lightning",
-    "regtest",
+    "grid",
+    "payments",
     "sandbox",
     "webhooks"
   ],
   "license": "MIT",
   "dependencies": {
-    "@lightsparkdev/lightspark-sdk": "^1.9.0",
+    "@lightsparkdev/grid": "^1.8.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
   }

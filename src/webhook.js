@@ -1,87 +1,107 @@
-// Webhook server: receives Lightspark webhook deliveries, verifies their
-// signature against LIGHTSPARK_WEBHOOK_SIGNING_KEY, and records each valid
-// event in the local event store.
+// Webhook server for Lightspark Grid.
+//
+// Grid signs each delivery with ECDSA (P-256 / SHA-256) over the raw request
+// body and sends the signature in the `X-Grid-Signature` header. The SDK's
+// `webhooks.unwrap()` only JSON-parses — it does NOT verify — so we verify the
+// signature ourselves against LIGHTSPARK_WEBHOOK_SIGNING_KEY (a PEM public key)
+// before storing anything.
 //
 // Run with:  npm start
-//
-// Point your Lightspark webhook configuration at:  http://<host>:<PORT>/webhooks
+// Endpoints:
+//   POST /webhook     ← Grid deliveries (signature-verified)
+//   GET  /health      ← { "status": "ok" }
+//   GET  /events      ← sanitized event list (type, id, entity, timestamp)
 
 import "dotenv/config";
+import crypto from "node:crypto";
 import express from "express";
-import {
-  verifyAndParseWebhook,
-  WEBHOOKS_SIGNATURE_HEADER,
-} from "@lightsparkdev/lightspark-sdk";
-import { addEvent, getEvents, getEventById } from "./event-store.js";
+import LightsparkGrid from "@lightsparkdev/grid";
+import { saveEvent, listEvents } from "./event-store.js";
 
 const PORT = Number(process.env.PORT) || 3000;
-const WEBHOOK_SECRET = process.env.LIGHTSPARK_WEBHOOK_SIGNING_KEY;
+const SIGNING_KEY = process.env.LIGHTSPARK_WEBHOOK_SIGNING_KEY;
+const SIGNATURE_HEADER = "x-grid-signature";
 
-if (!WEBHOOK_SECRET) {
+if (!SIGNING_KEY) {
   console.warn(
-    "! LIGHTSPARK_WEBHOOK_SIGNING_KEY is not set — incoming webhooks " +
-      "cannot be verified and will be rejected."
+    "! LIGHTSPARK_WEBHOOK_SIGNING_KEY is not set — deliveries cannot be " +
+      "verified and will be rejected with 401."
   );
 }
 
+// The signing key may be provided as a bare base64 SPKI or a full PEM block.
+function toPem(key) {
+  if (key.includes("BEGIN PUBLIC KEY")) return key;
+  return `-----BEGIN PUBLIC KEY-----\n${key}\n-----END PUBLIC KEY-----`;
+}
+
+/**
+ * Verify a Grid webhook signature over the raw body.
+ * @param {Buffer} rawBody
+ * @param {string} signatureHeader - value of X-Grid-Signature
+ * @returns {boolean}
+ */
+function verifySignature(rawBody, signatureHeader) {
+  if (!SIGNING_KEY || !signatureHeader) return false;
+
+  // Signature is either {"v":"1","s":"<base64>"} or plain base64.
+  let b64 = signatureHeader.trim();
+  try {
+    const parsed = JSON.parse(b64);
+    if (parsed && typeof parsed.s === "string") b64 = parsed.s;
+  } catch {
+    // Not JSON — treat as raw base64.
+  }
+
+  try {
+    const signature = Buffer.from(b64, "base64");
+    const verifier = crypto.createVerify("SHA256");
+    verifier.update(rawBody);
+    verifier.end();
+    return verifier.verify(toPem(SIGNING_KEY), signature);
+  } catch (err) {
+    console.error("[webhook] verification error:", err.message);
+    return false;
+  }
+}
+
+const grid = new LightsparkGrid({ username: "unused", password: "unused" });
 const app = express();
 
-// The signature is computed over the exact raw bytes of the request body,
-// so we must NOT let a JSON parser touch it first. Capture the raw Buffer.
-app.post(
-  "/webhooks",
-  express.raw({ type: "*/*" }),
-  async (req, res) => {
-    const signature = req.header(WEBHOOKS_SIGNATURE_HEADER);
+// Preserve the exact raw bytes — the signature is computed over them, so a
+// JSON parser must not touch the body first.
+app.post("/webhook", express.raw({ type: "*/*" }), (req, res) => {
+  const signature = req.header(SIGNATURE_HEADER);
 
-    if (!WEBHOOK_SECRET) {
-      return res.status(500).send("Server missing webhook signing key.");
-    }
-    if (!signature) {
-      return res.status(400).send(`Missing ${WEBHOOKS_SIGNATURE_HEADER} header.`);
-    }
-
-    let event;
-    try {
-      // Throws if the signature does not match the payload.
-      event = await verifyAndParseWebhook(
-        req.body, // raw Buffer / Uint8Array
-        signature,
-        WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.error("[webhook] signature verification failed:", err.message);
-      return res.status(401).send("Invalid signature.");
-    }
-
-    const stored = addEvent(event);
-    console.log(
-      `[webhook] ${event.event_type} for ${event.entity_id} ` +
-        `(event ${event.event_id}) accepted.`
-    );
-
-    // Acknowledge fast; Lightspark retries on non-2xx responses.
-    return res.status(200).json({ received: true, id: stored.event_id });
+  if (!verifySignature(req.body, signature)) {
+    console.warn("[webhook] rejected: invalid or missing signature");
+    return res.status(401).json({ error: "invalid signature" });
   }
-);
 
-// Convenience read endpoints for inspecting what we've received.
-app.get("/events", (_req, res) => {
-  res.json(getEvents());
+  let event;
+  try {
+    event = grid.webhooks.unwrap(req.body.toString("utf8"));
+  } catch {
+    return res.status(400).json({ error: "malformed body" });
+  }
+
+  // Persist BEFORE acknowledging, and de-duplicate by event id.
+  const { record, duplicate } = saveEvent(event);
+  console.log(
+    `[webhook] ${duplicate ? "duplicate" : "accepted"} ` +
+      `${record.type ?? "event"} (${record.eventId ?? "no-id"})`
+  );
+
+  return res.status(200).json({ received: true, duplicate, id: record.eventId });
 });
 
-app.get("/events/:id", (req, res) => {
-  const event = getEventById(req.params.id);
-  if (!event) return res.status(404).json({ error: "not found" });
-  res.json(event);
-});
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
-app.get("/healthz", (_req, res) => res.json({ ok: true }));
+app.get("/events", (_req, res) => res.json(listEvents()));
 
 app.listen(PORT, () => {
-  console.log(`Lightspark webhook server listening on port ${PORT}`);
-  console.log(`  POST /webhooks      ← Lightspark deliveries`);
-  console.log(`  GET  /events        ← all received events`);
-  console.log(`  GET  /events/:id    ← one event by id`);
-  console.log(`  GET  /healthz       ← liveness check`);
+  console.log(`Grid webhook server listening on port ${PORT}`);
+  console.log(`  POST /webhook   ← Grid deliveries (X-Grid-Signature verified)`);
+  console.log(`  GET  /health    ← { "status": "ok" }`);
+  console.log(`  GET  /events    ← sanitized received events`);
 });

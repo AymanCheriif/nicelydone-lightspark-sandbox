@@ -63,6 +63,23 @@ with real `Transaction:` ids, plus rejected negative cases with their failure re
 > "Cancelled customer credit" quote to expire and prove that executing an expired
 > quote is rejected.
 
+### Run payouts
+
+```bash
+npm run payout
+```
+
+Sends an outgoing **platform payout**: creates an external recipient account and
+transfers funds from the platform's internal account to it (appears under
+**Payouts → Platform payouts** in the dashboard). Also attempts a **customer
+payout** (create customer → external account → transfer), which is best-effort in
+sandbox.
+
+> Payouts need two permissions: creating a recipient requires a **MANAGE** token
+> (Webhooks/Reconciliation) and sending requires a **TRANSACT** token (Payments).
+> The script uses the Reconciliation client for setup and the Payments client to
+> send.
+
 ### Run reconciliation
 
 ```bash
@@ -99,6 +116,7 @@ ngrok http 3000
 src/
   client.js       # Grid client factory (Basic auth) + internal-account helpers
   payments.js     # Sandbox lifecycle: fund → quote → execute → negatives → cancel → list
+  payouts.js      # Outgoing payouts: platform (internal → external) + customer payout
   reconcile.js    # Balance vs. transaction-total reconciliation (Reconciliation token)
   webhook.js      # Express server: ECDSA X-Grid-Signature verification + storage
   event-store.js  # Append-only in-memory + JSON-file store (saveEvent / listEvents)

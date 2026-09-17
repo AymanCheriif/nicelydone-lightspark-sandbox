@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/webhook.js",
     "sandbox": "node src/payments.js",
-    "reconcile": "node src/reconcile.js"
+    "reconcile": "node src/reconcile.js",
+    "payout": "node src/payouts.js"
   },
   "keywords": [
     "lightspark",

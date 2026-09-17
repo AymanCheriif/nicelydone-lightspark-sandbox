@@ -170,12 +170,62 @@ async function main() {
 
   log("Negative cases", negatives);
 
-  // 6. List transactions.
-  const txPage = await client.transactions.list({ limit: 10 });
+  // 5b. "Cancelled customer credit" lifecycle.
+  // Grid has no explicit quote-cancel endpoint — a quote is cancelled by simply
+  // never executing it and letting it expire (a ~180s TTL). We create the quote,
+  // confirm it is PENDING/unpaid (the cancellable state), and leave it
+  // unexecuted. Set RUN_EXPIRY_CASE=1 to also wait for expiry and prove that
+  // paying a cancelled/expired quote is rejected.
+  const cancelled = { description: "Cancelled customer credit" };
+  try {
+    const q = await client.quotes.create({
+      source: { sourceType: "ACCOUNT", accountId: account.id },
+      destination: { destinationType: "ACCOUNT", accountId: account.id },
+      lockedCurrencyAmount: 15_000,
+      lockedCurrencySide: "SENDING",
+      description: "Cancelled customer credit",
+    });
+    cancelled.quoteId = q.id;
+    cancelled.createdStatus = q.status;
+    cancelled.expiresAt = q.expiresAt;
+
+    const retrieved = await client.quotes.retrieve(q.id);
+    cancelled.beforePaymentStatus = retrieved.status; // PENDING = unpaid, cancellable
+    cancelled.cancellation = "abandoned (not executed); Grid cancels via expiry, no cancel endpoint";
+
+    if (process.env.RUN_EXPIRY_CASE) {
+      const waitMs = new Date(q.expiresAt).getTime() - Date.now() + 5_000;
+      console.log(`  (waiting ~${Math.round(waitMs / 1000)}s for quote to expire…)`);
+      await new Promise((r) => setTimeout(r, Math.max(waitMs, 0)));
+      try {
+        const paid = await client.quotes.execute(q.id);
+        cancelled.payAfterCancel = { status: paid.status, unexpectedlySucceeded: true };
+      } catch (err) {
+        cancelled.payAfterCancel = { rejected: true, reason: reasonOf(err) };
+      }
+    } else {
+      cancelled.payAfterCancel = "skipped (set RUN_EXPIRY_CASE=1 to prove expired-quote rejection)";
+    }
+  } catch (err) {
+    cancelled.error = reasonOf(err);
+  }
+  log("Cancelled customer credit", cancelled);
+
+  // 6. List transactions with detail (status, direction, amounts, fees, times).
+  const txPage = await client.transactions.list({ limit: 15 });
   const txs = txPage.data ?? [];
   log("Recent transactions", {
     count: txs.length,
-    transactions: txs.map((t) => ({ id: t.id, status: t.status })),
+    transactions: txs.map((t) => ({
+      id: t.id,
+      status: t.status,
+      direction: t.direction,
+      sentAmount: t.sentAmount?.amount ?? t.sentAmount ?? null,
+      receivedAmount: t.receivedAmount?.amount ?? t.receivedAmount ?? null,
+      fees: t.fees ?? null,
+      createdAt: t.createdAt,
+      resolvedAt: t.status === "COMPLETED" ? t.updatedAt : null,
+    })),
   });
 
   log("Summary", {

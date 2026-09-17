@@ -51,11 +51,27 @@ npm run sandbox
 Prints structured JSON for: platform config, three labeled funding operations
 (200,000 / 75,000 / 25,000 cents), balances, three quote→payment lifecycles
 (Acme onboarding fee, Northstar design review, Brightline support credit), three
-negative cases (invalid quote id, over-balance payment, duplicate execution), and the
-recent transaction list.
+negative cases (invalid quote id, over-balance payment, duplicate execution), a
+"Cancelled customer credit" quote left unexecuted, and a detailed recent-transaction
+list (direction, amounts, fees, timestamps).
 
 Expected output includes a funded balance and `PROCESSING`/`COMPLETED` payment statuses
 with real `Transaction:` ids, plus rejected negative cases with their failure reasons.
+
+> Grid has no explicit quote-cancel endpoint — quotes are cancelled by expiry
+> (~180s TTL). Set `RUN_EXPIRY_CASE=1 npm run sandbox` to also wait for the
+> "Cancelled customer credit" quote to expire and prove that executing an expired
+> quote is rejected.
+
+### Run reconciliation
+
+```bash
+npm run reconcile
+```
+
+Uses the **Sandbox Reconciliation** token to read the internal-account balance and all
+transactions, then prints a compact report: current balance, transaction count,
+credit/debit totals (COMPLETED only), fees, and a status breakdown.
 
 ### Run the webhook server
 
@@ -81,8 +97,9 @@ ngrok http 3000
 
 ```
 src/
-  client.js       # Grid client factory (Basic auth) + internal-account helper
-  payments.js     # Sandbox lifecycle: fund → quote → execute → negatives → list
+  client.js       # Grid client factory (Basic auth) + internal-account helpers
+  payments.js     # Sandbox lifecycle: fund → quote → execute → negatives → cancel → list
+  reconcile.js    # Balance vs. transaction-total reconciliation (Reconciliation token)
   webhook.js      # Express server: ECDSA X-Grid-Signature verification + storage
   event-store.js  # Append-only in-memory + JSON-file store (saveEvent / listEvents)
 ```

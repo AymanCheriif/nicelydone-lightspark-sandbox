@@ -70,7 +70,7 @@ const app = express();
 
 // Preserve the exact raw bytes — the signature is computed over them, so a
 // JSON parser must not touch the body first.
-app.post("/webhook", express.raw({ type: "*/*" }), (req, res) => {
+app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   const signature = req.header(SIGNATURE_HEADER);
 
   if (!verifySignature(req.body, signature)) {
@@ -85,16 +85,23 @@ app.post("/webhook", express.raw({ type: "*/*" }), (req, res) => {
     return res.status(400).json({ error: "malformed body" });
   }
 
-  // Acknowledge immediately so we always respond fast, then persist.
-  res.status(200).json({ received: true });
+  // Persist BEFORE acknowledging: if storage fails we return 5xx so Grid
+  // retries, rather than losing the event behind an early 200. Storage is a
+  // fast local write + in-memory de-dupe, so the response is still prompt.
+  let record;
+  let duplicate;
+  try {
+    ({ record, duplicate } = await saveEvent(event));
+  } catch (err) {
+    console.error("[webhook] storage failed, asking for retry:", err.message);
+    return res.status(500).json({ error: "storage failed" });
+  }
 
-  // Fire-and-forget storage after acknowledging.
-  saveEvent(event).then(({ record, duplicate }) => {
-    console.log(
-      `[webhook] ${duplicate ? "duplicate" : "accepted"} ` +
-        `${record.type ?? "event"} (${record.eventId ?? "no-id"})`
-    );
-  });
+  console.log(
+    `[webhook] ${duplicate ? "duplicate" : "accepted"} ` +
+      `${record.type ?? "event"} (${record.eventId ?? "no-id"})`
+  );
+  return res.status(200).json({ received: true, duplicate, id: record.eventId });
 });
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

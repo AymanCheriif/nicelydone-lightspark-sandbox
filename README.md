@@ -14,6 +14,11 @@ halves of a Grid integration against the **sandbox** environment:
 > (`@lightsparkdev/grid`, base `https://api.lightspark.com/grid/2025-10-13`) — *not*
 > the Lightspark Lightning-node SDK. Everything runs in the sandbox; no real money moves.
 
+> **Sandbox-only operation.** This project runs exclusively against the Grid
+> **sandbox** environment (Grid's equivalent of Lightning REGTEST) — API tokens are
+> environment-scoped, so sandbox tokens cannot touch production. No mainnet or
+> real-money operations are performed anywhere in this code.
+
 ## Requirements
 
 - Node.js **22+**
@@ -57,6 +62,26 @@ list (direction, amounts, fees, timestamps).
 
 Expected output includes a funded balance and `PROCESSING`/`COMPLETED` payment statuses
 with real `Transaction:` ids, plus rejected negative cases with their failure reasons.
+A successful run looks like:
+
+```jsonc
+=== Funding: Initial sandbox liquidity ===
+{ "amount": 200000, "currency": "USD", "newBalance": 200000 }
+
+=== Invoice → payment: Acme onboarding fee ===
+{
+  "description": "Acme onboarding fee",
+  "amount": 20000,
+  "quoteId": "Quote:01a0…",
+  "quoteStatus": "PENDING",
+  "paymentStatus": "PROCESSING",
+  "transactionId": "Transaction:01a0…",
+  "totalSendingAmount": 20000,
+  "failureReason": null
+}
+// … then negatives (rejected), a cancelled quote, and the transaction list
+✓ Sandbox lifecycle complete.
+```
 
 > Grid has no explicit quote-cancel endpoint — quotes are cancelled by expiry
 > (~180s TTL). Set `RUN_EXPIRY_CASE=1 npm run sandbox` to also wait for the

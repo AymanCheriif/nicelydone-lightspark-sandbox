@@ -85,14 +85,16 @@ app.post("/webhook", express.raw({ type: "*/*" }), (req, res) => {
     return res.status(400).json({ error: "malformed body" });
   }
 
-  // Persist BEFORE acknowledging, and de-duplicate by event id.
-  const { record, duplicate } = saveEvent(event);
-  console.log(
-    `[webhook] ${duplicate ? "duplicate" : "accepted"} ` +
-      `${record.type ?? "event"} (${record.eventId ?? "no-id"})`
-  );
+  // Acknowledge immediately so we always respond fast, then persist.
+  res.status(200).json({ received: true });
 
-  return res.status(200).json({ received: true, duplicate, id: record.eventId });
+  // Fire-and-forget storage after acknowledging.
+  saveEvent(event).then(({ record, duplicate }) => {
+    console.log(
+      `[webhook] ${duplicate ? "duplicate" : "accepted"} ` +
+        `${record.type ?? "event"} (${record.eventId ?? "no-id"})`
+    );
+  });
 });
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

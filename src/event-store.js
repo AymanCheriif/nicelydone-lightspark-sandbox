@@ -2,7 +2,8 @@
 // Keeps events in memory for fast access and mirrors them to a JSON file so
 // they survive a restart. Records are sanitized: no signatures or credentials.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -22,13 +23,10 @@ if (existsSync(STORE_PATH)) {
   }
 }
 
-function persist() {
-  try {
-    writeFileSync(STORE_PATH, JSON.stringify(events, null, 2));
-  } catch (err) {
-    // Persistence is best-effort; never let it take down the webhook.
-    console.error("[event-store] failed to persist events:", err.message);
-  }
+async function persist() {
+  // Async, non-blocking write. Callers that must guarantee durability before
+  // acknowledging a webhook should `await saveEvent(...)`.
+  await writeFile(STORE_PATH, JSON.stringify(events, null, 2));
 }
 
 /**
@@ -51,16 +49,16 @@ function sanitize(event) {
  * Append a webhook event, de-duplicated by its event id. Returns the stored
  * record, or the existing one if this event id was already seen.
  * @param {object} event - The parsed Grid webhook event.
- * @returns {{ record: object, duplicate: boolean }}
+ * @returns {Promise<{ record: object, duplicate: boolean }>}
  */
-export function saveEvent(event) {
+export async function saveEvent(event) {
   const record = sanitize(event);
   if (record.eventId) {
     const existing = events.find((e) => e.eventId === record.eventId);
     if (existing) return { record: existing, duplicate: true };
   }
   events.push(record);
-  persist();
+  await persist();
   return { record, duplicate: false };
 }
 
@@ -72,9 +70,9 @@ export function listEvents() {
 }
 
 /** Clear all stored events (useful in tests / between sandbox runs). */
-export function clearEvents() {
+export async function clearEvents() {
   events = [];
-  persist();
+  await persist();
 }
 
 export default { saveEvent, listEvents, clearEvents };

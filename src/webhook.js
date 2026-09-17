@@ -69,8 +69,10 @@ const grid = new LightsparkGrid({ username: "unused", password: "unused" });
 const app = express();
 
 // Preserve the exact raw bytes — the signature is computed over them, so a
-// JSON parser must not touch the body first.
-app.post("/webhook", express.raw({ type: "*/*" }), async (req, res) => {
+// JSON parser must not touch the body first. Accept the delivery on "/webhook"
+// and also on "/" so it works whether or not the dashboard endpoint URL
+// includes the path.
+app.post(["/webhook", "/"], express.raw({ type: "*/*" }), async (req, res) => {
   const signature = req.header(SIGNATURE_HEADER);
 
   if (!verifySignature(req.body, signature)) {

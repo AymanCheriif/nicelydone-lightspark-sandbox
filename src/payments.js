@@ -12,7 +12,11 @@
 //
 // Everything runs against the Grid sandbox environment — no real money moves.
 
-import { createGridClient, getPrimaryInternalAccount } from "./client.js";
+import {
+  createGridClient,
+  getPrimaryInternalAccount,
+  getInternalAccountById,
+} from "./client.js";
 
 const CURRENCY = "USD"; // amounts are in the smallest unit (cents)
 
@@ -49,15 +53,18 @@ async function main() {
     supportedCurrencies: (config.supportedCurrencies ?? []).map((c) => c.currencyCode),
   });
 
-  // 2. Fund the internal account.
-  let account = await getPrimaryInternalAccount(client);
+  // 2. Fund the internal account. A platform may have several internal accounts
+  // (one per currency) returned in a non-deterministic order, so we pin to a
+  // single USD account by id and fund/send from that exact account throughout.
+  const account = await getPrimaryInternalAccount(client, { currency: CURRENCY });
+  const accountId = account.id;
   log("Internal account (before funding)", {
-    id: account.id,
+    id: accountId,
     balance: account.balance,
   });
 
   for (const op of FUNDING_OPS) {
-    const funded = await client.sandbox.internalAccounts.fund(account.id, {
+    const funded = await client.sandbox.internalAccounts.fund(accountId, {
       amount: op.amount,
     });
     log(`Funding: ${op.label}`, {
@@ -67,11 +74,11 @@ async function main() {
     });
   }
 
-  // 3. Review balances.
-  account = await getPrimaryInternalAccount(client);
+  // 3. Review balances (re-fetch the same account by id, not by list order).
+  const afterFunding = await getInternalAccountById(client, accountId);
   log("Internal account (after funding)", {
-    id: account.id,
-    availableBalance: account.balance,
+    id: accountId,
+    availableBalance: afterFunding?.balance,
   });
 
   // 4. Create + execute three quotes ("invoices").

@@ -54,17 +54,38 @@ export function createGridClient({ role = "payments" } = {}) {
 }
 
 /**
- * Fetch the platform's primary internal account (the wallet we fund and send from).
+ * Fetch a stable internal account to fund and send from.
+ *
+ * A platform can have several internal accounts (one per currency), and
+ * `listInternalAccounts` does not guarantee order — so we filter by currency
+ * and sort by id to always return the SAME account across calls.
+ *
  * @param {LightsparkGrid} client
+ * @param {{ currency?: string }} [opts] - currency code to select (default "USD")
  * @returns {Promise<import("@lightsparkdev/grid").LightsparkGrid.InternalAccount>}
  */
-export async function getPrimaryInternalAccount(client) {
+export async function getPrimaryInternalAccount(client, { currency = "USD" } = {}) {
   const res = await client.platform.listInternalAccounts();
   const accounts = res.data ?? [];
   if (accounts.length === 0) {
     throw new Error("No internal accounts found on this Grid platform.");
   }
-  return accounts[0];
+  const matching = accounts
+    .filter((a) => a.balance?.currency?.code === currency)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const chosen = matching[0] ?? [...accounts].sort((a, b) => a.id.localeCompare(b.id))[0];
+  return chosen;
+}
+
+/**
+ * Re-fetch a specific internal account by id (order-independent).
+ * @param {LightsparkGrid} client
+ * @param {string} accountId
+ * @returns {Promise<import("@lightsparkdev/grid").LightsparkGrid.InternalAccount|undefined>}
+ */
+export async function getInternalAccountById(client, accountId) {
+  const res = await client.platform.listInternalAccounts();
+  return (res.data ?? []).find((a) => a.id === accountId);
 }
 
 export default createGridClient;
